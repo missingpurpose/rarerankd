@@ -285,16 +285,21 @@ async fn ord_status(app: &App) -> Result<OrdStatus> {
 
 async fn ord_inscription_by_number(app: &App, n: u64) -> Result<Option<Value>> {
     let url = format!("{}/inscription/{}", app.cfg.ord_base_url.trim_end_matches('/'), n);
-    let v: Value = app
+
+    let resp = app
         .http
         .get(url)
         .header("Accept", "application/json")
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
 
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        // ord hasn't made this inscription number available yet
+        return Ok(None);
+    }
+
+    let resp = resp.error_for_status()?;
+    let v: Value = resp.json().await?;
     Ok(if v.is_null() { None } else { Some(v) })
 }
 
