@@ -121,7 +121,13 @@ async fn main() -> Result<()> {
             let ord_base = ord_base.clone();
             tasks.push(tokio::spawn(async move {
                 let _permit = sem.acquire_owned().await?;
-                let v = ord_inscription_by_number(&http, &ord_base, n).await?;
+                let v = match ord_inscription_by_number(&http, &ord_base, n).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("WARN: inscription fetch failed n={}: {:#}", n, e);
+                        None
+                    }
+                };
                 Ok::<(u64, Option<Value>), anyhow::Error>((n, v))
             }));
         }
@@ -129,7 +135,17 @@ async fn main() -> Result<()> {
         let mut scanned: u64 = 0;
 
         for t in tasks {
-            let (n, opt) = t.await.context("join task")??;
+            let (n, opt) = match t.await {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => {
+                    eprintln!("WARN: task failed: {:#}", e);
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("WARN: join failed: {}", e);
+                    continue;
+                }
+            };
             scanned += 1;
 
             let Some(v) = opt else { continue; };
