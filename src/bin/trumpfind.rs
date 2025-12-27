@@ -33,7 +33,11 @@ async fn ord_inscription_by_number(
     n: u64,
 ) -> Result<Option<Value>> {
     let url = format!("{}/inscription/{}", ord_base.trim_end_matches('/'), n);
-    let resp = http.get(url).header("Accept", "application/json").send().await?;
+    let resp = match http.get(url).header("Accept", "application/json").send().await {
+    Ok(r) => r,
+    Err(e) if e.is_timeout() => return Ok(None),
+    Err(e) => return Err(e.into()),
+};
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -75,7 +79,7 @@ async fn main() -> Result<()> {
     let _ = OpenOptions::new().create(true).append(true).open(&hits_path);
 
     let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
         .pool_max_idle_per_host(concurrency)
         .build()
         .context("build http client")?;
