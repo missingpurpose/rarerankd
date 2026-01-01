@@ -41,6 +41,7 @@ fn inscription_id_string((head, tail, index): InscriptionIdValue) -> String {
   let mut bytes = [0u8; 32];
   bytes[..16].copy_from_slice(&head);
   bytes[16..].copy_from_slice(&tail);
+  bytes.reverse();
   format!("{}i{}", hex32(bytes), index)
 }
 
