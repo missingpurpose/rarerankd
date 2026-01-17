@@ -43,6 +43,53 @@ When generating these exports from production:
 - `ord-server` holds an exclusive lock on `index.redb`.
 - Stop `ord-server`, run the scan, then start `ord-server` again immediately after.
 
+## Running the scanner (full scan vs first-hit-only)
+
+This branch includes a small CLI tool that scans `ord`’s `index.redb` directly:
+
+- Binary: `trumpfind_redb` (source: `src/bin/trumpfind_redb.rs`)
+
+### Build
+
+Run in the repo root:
+
+```bash
+cd /Volumes/btc-node/everything-alkanes/rarerankd
+cargo build --release --bin trumpfind_redb
+```
+
+### Required input
+
+- Path to `ord`’s database file: `index.redb` (e.g. `/var/lib/ord/index.redb`)
+
+### Full scan (default behavior; unchanged)
+
+Run in the repo root:
+
+```bash
+cd /Volumes/btc-node/everything-alkanes/rarerankd
+./target/release/trumpfind_redb \
+  --db-path /var/lib/ord/index.redb \
+  --hits-path ./trump_hits.jsonl
+```
+
+- Output: appends JSONL hit records to `./trump_hits.jsonl`
+
+### First-hit-only mode
+
+Run in the repo root:
+
+```bash
+cd /Volumes/btc-node/everything-alkanes/rarerankd
+./target/release/trumpfind_redb \
+  --db-path /var/lib/ord/index.redb \
+  --first-only \
+  --first-hits-path ./trump_hits_first.jsonl
+```
+
+- Output: **overwrites** `./trump_hits_first.jsonl` with exactly **one** JSON line (plus trailing newline)
+- Expected first-only result: `hit_index=1`, `inscription_number=81185349`
+
 ## Security
 
 Do not commit:
