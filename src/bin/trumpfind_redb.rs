@@ -112,8 +112,6 @@ struct FirstHitRecord {
   height: u32,
   timestamp: u32,
   category: String,
-  // optional extra fields (kept deterministic by struct ordering)
-  sequence_number: u32,
 }
 
 fn write_single_jsonl_truncate(path: &str, value: &impl Serialize) -> Result<()> {
@@ -327,7 +325,6 @@ NOTES:
             height,
             timestamp,
             category: "trump_casascius".to_string(),
-            sequence_number: seq,
           };
           write_single_jsonl_truncate(&first_hits_path, &rec)?;
           eprintln!("wrote first hit to {first_hits_path}");
