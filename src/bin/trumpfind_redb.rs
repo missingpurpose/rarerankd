@@ -11,8 +11,7 @@ const INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER: TableDefinition<i32, u32> =
   TableDefinition::new("INSCRIPTION_NUMBER_TO_SEQUENCE_NUMBER");
 
 type InscriptionIdValue = (u128, u128, u32);
-type OutPointValue = (u128, u128, u32); // txid (32 bytes) + vout
-type SatPointValue = (OutPointValue, u64); // outpoint + offset
+type SatPointBytes = [u8; 44]; // ord encodes SatPoint as 44 bytes (txid[32] + vout[u32] + offset[u64])
 type InscriptionEntryValue = (
   u16,                // charms
   u64,                // fee
@@ -51,19 +50,27 @@ fn inscription_id_string((head, tail, index): InscriptionIdValue) -> String {
   format!("{}i{}", hex32(bytes), index)
 }
 
-fn txid_string((head, tail, _vout): OutPointValue) -> String {
-  let head = head.to_le_bytes();
-  let tail = tail.to_le_bytes();
-  let mut bytes = [0u8; 32];
-  bytes[..16].copy_from_slice(&head);
-  bytes[16..].copy_from_slice(&tail);
-  bytes.reverse();
-  hex32(bytes)
+fn hex_bytes(bytes: &[u8]) -> String {
+  const HEX: &[u8; 16] = b"0123456789abcdef";
+  let mut out = vec![0u8; bytes.len() * 2];
+  for (i, b) in bytes.iter().enumerate() {
+    out[i * 2] = HEX[(b >> 4) as usize];
+    out[i * 2 + 1] = HEX[(b & 0x0f) as usize];
+  }
+  String::from_utf8(out).unwrap()
 }
 
-fn satpoint_string((outpoint, offset): SatPointValue) -> String {
-  let (_h, _t, vout) = outpoint;
-  format!("{}:{}:{}", txid_string(outpoint), vout, offset)
+fn decode_satpoint_bytes(b: SatPointBytes) -> Result<String> {
+  // ord stores SatPoint as 44 bytes:
+  // - txid: 32 bytes (bitcoin internal byte order), displayed reversed
+  // - vout: u32 little-endian
+  // - offset: u64 little-endian
+  let mut txid = [0u8; 32];
+  txid.copy_from_slice(&b[0..32]);
+  txid.reverse();
+  let vout = u32::from_le_bytes(b[32..36].try_into().unwrap());
+  let offset = u64::from_le_bytes(b[36..44].try_into().unwrap());
+  Ok(format!("{}:{}:{}", hex_bytes(&txid), vout, offset))
 }
 
 fn append_jsonl(path: &str, value: &serde_json::Value) -> Result<()> {
@@ -143,14 +150,39 @@ fn list_satpoint_table_names(db: &Database) -> Result<Vec<String>> {
   Ok(candidates)
 }
 
-fn lookup_satpoint(db: &Database, table_name: &str, seq: u32) -> Result<Option<String>> {
-  // We intentionally keep this conservative: if the table exists but the type does not match
-  // our expected SatPointValue encoding, `open_table` will error and we bubble up.
+fn lookup_satpoint(db: &Database, table_name: &str, seq: u32, sat: u64) -> Result<Option<String>> {
+  // ord schema varies by version; common satpoint tables are:
+  // - SEQUENCE_NUMBER_TO_SATPOINT: Table<u32, [u8;44]>
+  // - SAT_TO_SATPOINT: Table<u64, [u8;44]>
   let rtx = db.begin_read()?;
-  let def: TableDefinition<u32, SatPointValue> = TableDefinition::new(table_name);
-  let table = rtx.open_table(def)?;
-  let Some(v) = table.get(&seq)? else { return Ok(None); };
-  Ok(Some(satpoint_string(v.value())))
+
+  if table_name.to_ascii_uppercase().contains("SEQUENCE_NUMBER_TO_SATPOINT") {
+    let def: TableDefinition<u32, SatPointBytes> = TableDefinition::new(table_name);
+    let table = rtx.open_table(def)?;
+    let Some(v) = table.get(&seq)? else { return Ok(None); };
+    return Ok(Some(decode_satpoint_bytes(v.value())?));
+  }
+
+  if table_name.to_ascii_uppercase().contains("SAT_TO_SATPOINT") {
+    let def: TableDefinition<u64, SatPointBytes> = TableDefinition::new(table_name);
+    let table = rtx.open_table(def)?;
+    let Some(v) = table.get(&sat)? else { return Ok(None); };
+    return Ok(Some(decode_satpoint_bytes(v.value())?));
+  }
+
+  // Fallback probing: try sequence key then sat key.
+  if let Ok(table) = rtx.open_table::<u32, SatPointBytes>(TableDefinition::new(table_name)) {
+    if let Some(v) = table.get(&seq)? {
+      return Ok(Some(decode_satpoint_bytes(v.value())?));
+    }
+  }
+  if let Ok(table) = rtx.open_table::<u64, SatPointBytes>(TableDefinition::new(table_name)) {
+    if let Some(v) = table.get(&sat)? {
+      return Ok(Some(decode_satpoint_bytes(v.value())?));
+    }
+  }
+
+  Ok(None)
 }
 
 fn main() -> Result<()> {
@@ -301,7 +333,7 @@ NOTES:
 
           let mut satpoint: Option<String> = None;
           for table_name in &satpoint_table_names {
-            match lookup_satpoint(&db, table_name, seq) {
+            match lookup_satpoint(&db, table_name, seq, sat) {
               Ok(Some(sp)) => {
                 satpoint = Some(sp);
                 break;
